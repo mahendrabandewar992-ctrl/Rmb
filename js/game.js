@@ -9,18 +9,34 @@ const BACKEND_URL = "https://rmb-bingo-backend.onrender.com"; // Replace with yo
   }
 })();
 
-// Connect to backend Socket.IO
-const socket = io(BACKEND_URL);
-socket.on("connect", () => {
-  console.log("Connected to backend via Socket.IO");
-});
-socket.on("players:count", (data) => {
-  document.getElementById("playersCount").innerText = data.count;
-});
+// ---- Connection Status + Socket.IO ----
+const statusEl = document.getElementById("connectionStatus");
+let socket;
 
-// Generate bingo card
+if (typeof io !== "undefined" && statusEl) {
+  socket = io(BACKEND_URL);
+
+  socket.on("connect", () => {
+    statusEl.textContent = "✅ Connected to server";
+    statusEl.style.color = "green";
+  });
+
+  socket.on("disconnect", () => {
+    statusEl.textContent = "❌ Disconnected from server";
+    statusEl.style.color = "red";
+  });
+
+  // Update player counts if available
+  socket.on("players:count", (data) => {
+    const el = document.getElementById("playersCount");
+    if (el) el.innerText = data.count;
+  });
+}
+
+// ---- Bingo Card + Demo Round ----
 function generateBingoCard() {
   const board = document.getElementById("bingoCard");
+  if (!board) return;
   board.innerHTML = "";
   const nums = [];
   while (nums.length < 24) {
@@ -43,7 +59,6 @@ function generateBingoCard() {
 }
 generateBingoCard();
 
-// Demo round logic (client-only)
 let drawn = [];
 function startDemoRound() {
   drawn = [];
@@ -63,6 +78,7 @@ function startDemoRound() {
     highlightNumber(pick);
   }, 700);
 }
+
 function highlightNumber(num) {
   const cells = document.querySelectorAll("#bingoCard div");
   cells.forEach((c) => {
@@ -70,14 +86,14 @@ function highlightNumber(num) {
   });
 }
 
-// Buy ticket integration
+// ---- Payment integration ----
 async function buyTicket(method) {
   try {
     if (method === "stripe") {
       const res = await fetch(`${BACKEND_URL}/create-checkout-session`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount: 5000, currency: "usd" }), // 5000 = $50
+        body: JSON.stringify({ amount: 5000, currency: "usd" }), // $50
       });
       const data = await res.json();
       if (data.url) {
@@ -93,7 +109,6 @@ async function buyTicket(method) {
       });
       const order = await res.json();
       alert("Razorpay order created (demo): " + order.id);
-      // Here you would open Razorpay checkout widget
     } else if (method === "paypal") {
       const res = await fetch(`${BACKEND_URL}/create-paypal-order`, {
         method: "POST",
@@ -107,7 +122,6 @@ async function buyTicket(method) {
   }
 }
 
-// Expose to global
+// Expose functions
 window.startDemoRound = startDemoRound;
 window.buyTicket = buyTicket;
-

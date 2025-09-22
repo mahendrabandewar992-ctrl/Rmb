@@ -11,35 +11,77 @@ const { v4: uuidv4 } = require('uuid');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: true, credentials: true } });
+
+// Allow only frontend URLs (GitHub Pages + localhost)
+const allowedOrigins = [
+  "http://localhost:5500", // for local dev (adjust port if needed)
+  "http://127.0.0.1:5500",
+  "https://YOUR-USERNAME.github.io" // 🔴 replace with your real GitHub Pages URL
+];
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("CORS not allowed from this origin: " + origin));
+      }
+    },
+    credentials: true,
+  })
+);
+
+app.use(express.json());
+app.use(bodyParser.raw({ type: 'application/json' }));
+
+const io = new Server(server, {
+  cors: {
+    origin: allowedOrigins,
+    credentials: true,
+  },
+});
 
 const PORT = process.env.PORT || 4242;
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
 const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID;
 const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
 
-const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY, { apiVersion: '2024-11-15' }) : null;
-const razorpay = (RAZORPAY_KEY_ID && RAZORPAY_KEY_SECRET) ? new Razorpay({ key_id: RAZORPAY_KEY_ID, key_secret: RAZORPAY_KEY_SECRET }) : null;
+const stripe = STRIPE_SECRET_KEY
+  ? new Stripe(STRIPE_SECRET_KEY, { apiVersion: '2024-11-15' })
+  : null;
 
-app.use(cors());
-app.use(express.json());
-app.use(bodyParser.raw({ type: 'application/json' }));
+const razorpay =
+  RAZORPAY_KEY_ID && RAZORPAY_KEY_SECRET
+    ? new Razorpay({ key_id: RAZORPAY_KEY_ID, key_secret: RAZORPAY_KEY_SECRET })
+    : null;
 
 const games = {};
 let globalPlayers = 0;
 
+// ---- Payment Endpoints ----
 app.post('/create-checkout-session', async (req, res) => {
   if (!stripe) return res.status(500).json({ error: 'Stripe not configured' });
   const { amount, currency = 'usd', metadata = {} } = req.body;
-  if (!amount || amount <= 0) return res.status(400).json({ error: 'Amount required' });
+  if (!amount || amount <= 0)
+    return res.status(400).json({ error: 'Amount required' });
   try {
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       mode: 'payment',
-      line_items: [{ price_data: { currency, product_data: { name: 'Bingo Tickets' }, unit_amount: amount }, quantity: 1 }],
+      line_items: [
+        {
+          price_data: {
+            currency,
+            product_data: { name: 'Bingo Tickets' },
+            unit_amount: amount,
+          },
+          quantity: 1,
+        },
+      ],
       success_url: `${process.env.APP_BASE_URL || 'http://localhost:' + PORT}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.APP_BASE_URL || 'http://localhost:' + PORT}/payment-cancel`,
-      metadata
+      metadata,
     });
     return res.json({ url: session.url, id: session.id });
   } catch (err) {
@@ -53,7 +95,12 @@ app.post('/create-razorpay-order', async (req, res) => {
   const { amount, currency = 'INR', receipt } = req.body;
   if (!amount || amount <= 0) return res.status(400).json({ error: 'Amount required' });
   try {
-    const options = { amount, currency, receipt: receipt || `rcpt_${uuidv4()}`, payment_capture: 1 };
+    const options = {
+      amount,
+      currency,
+      receipt: receipt || `rcpt_${uuidv4()}`,
+      payment_capture: 1,
+    };
     const order = await razorpay.orders.create(options);
     return res.json(order);
   } catch (err) {
@@ -63,14 +110,20 @@ app.post('/create-razorpay-order', async (req, res) => {
 });
 
 app.post('/create-paypal-order', (req, res) => {
-  return res.json({ message: 'Implement PayPal server integration (REST SDK) in production.' });
+  return res.json({
+    message: 'Implement PayPal server integration (REST SDK) in production.',
+  });
 });
 
 app.post('/webhook/stripe', (req, res) => {
-  console.log('Received stripe webhook (raw payload):', req.body.toString ? req.body.toString() : req.body);
+  console.log(
+    'Received stripe webhook (raw payload):',
+    req.body.toString ? req.body.toString() : req.body
+  );
   res.json({ received: true });
 });
 
+// ---- Socket.IO ----
 io.on('connection', (socket) => {
   console.log('socket connected', socket.id);
   globalPlayers++;
@@ -102,7 +155,7 @@ function startDrawSequence(gameId) {
   if (!state) return;
   let draws = 0;
   const interval = setInterval(() => {
-    const remaining = allNumbers.filter(n => !state.drawn.includes(n));
+    const remaining = allNumbers.filter((n) => !state.drawn.includes(n));
     if (remaining.length === 0 || draws >= 30) {
       clearInterval(interval);
       io.to('lobby').emit('game:ended', { gameId, drawn: state.drawn });
